@@ -24,8 +24,6 @@
 
 void BPE::train(const std::wstring& text, int vocab_size, const std::unordered_set<std::wstring>& allowed_special) {
 
-    std::cout << "start" << std::endl; // add flush
-
     // Debgugging file: merges.txt, used currently for looking at merges
     std::wofstream file2("merges.txt", std::ios::binary);
     file2.imbue(std::locale(file2.getloc(), new std::codecvt_utf8<wchar_t>));
@@ -36,37 +34,29 @@ void BPE::train(const std::wstring& text, int vocab_size, const std::unordered_s
 
 
 
-    // init unique chars and add first 256 ascii chars
-    int id = 0;
-
-    // ASCII initialization (optional but safe)
+    // Initialize ASCII (0-255)
+    ids_to_tokens.reserve(256 + 4096);  // Pre-allocate for ASCII + expected merges
     for (int i = 0; i < 256; ++i) {
         wchar_t ch = static_cast<wchar_t>(i);
-        std::wstring ch_str(1, ch);
-        tokens_to_ids[ch_str] = id;
-        ids_to_tokens[id] = ch_str;
-        ++id;
+        ids_to_tokens.emplace_back(1, ch);  // Direct construction
+        tokens_to_ids[ids_to_tokens.back()] = i;
     }
 
-    // Proper initialization for distinct wide chars from text
-    std::unordered_set<wchar_t> distinct_chars_from_text(text.begin(), text.end());  
-
-    for (const wchar_t& ch : distinct_chars_from_text) {
-        std::wstring ch_str(1, ch);
-        if (tokens_to_ids.find(ch_str) == tokens_to_ids.end()) {
-            tokens_to_ids[ch_str] = id;
-            ids_to_tokens[id] = ch_str;
-            ++id;
-
+    // Add distinct text characters
+    std::unordered_set<wchar_t> distinct_chars(text.begin(), text.end());
+    for (wchar_t ch : distinct_chars) {
+        std::wstring s(1, ch);
+        if (!tokens_to_ids.count(s)) {
+            ids_to_tokens.emplace_back(s);
+            tokens_to_ids[s] = ids_to_tokens.size() - 1;  // ID = current size
         }
-
     }
-    // After this, continue with special tokens:
-    for (const std::wstring& token : allowed_special) {
-        if (tokens_to_ids.find(token) == tokens_to_ids.end()) {
-            tokens_to_ids[token] = id;
-            ids_to_tokens[id] = token;
-            ++id;
+
+    // Add special tokens
+    for (const auto& tok : allowed_special) {
+        if (!tokens_to_ids.count(tok)) {
+            ids_to_tokens.emplace_back(tok);
+            tokens_to_ids[tok] = ids_to_tokens.size() - 1;
         }
     }
 
@@ -81,46 +71,31 @@ void BPE::train(const std::wstring& text, int vocab_size, const std::unordered_s
         token_ids.emplace_back(it->second);
     }
     for (int new_id = tokens_to_ids.size(); new_id < vocab_size; ++new_id) {
-        // std::cout << "hello";
-
-        // TODO: terminate early if no merges can be made
         auto pair_opt = find_freq_pair(token_ids);
-        if (!pair_opt.has_value()) {
-            break; // no more merges available
-        }
-    
+        if (!pair_opt.has_value()) break;
+
         auto pair_id = pair_opt.value();
         replace_pair_inplace(token_ids, pair_id, new_id);
+        
+        // Add to both merges and merge_order
         merges[pair_id] = new_id;
+        merge_order.emplace_back(pair_id, new_id); // Store insertion order
     }
 
-    std::vector<std::pair<std::pair<int, int>, int>> merge_list(merges.begin(), merges.end());
+    // Process merges in insertion order (no sorting needed)
+    for (const auto& merge : merge_order) {
+        const auto& pair_ids = merge.first;
+        int new_id = merge.second;
 
-    // Sort by new token id (the second element in the pair)
-    std::sort(merge_list.begin(), merge_list.end(), [](const auto& a, const auto& b) {
-        return a.second < b.second;
-    });
-
-    // this is where the merging happens!
-    // Replace the loop over 'merges' with 'merge_list'
-for (const auto& merge : merge_list) {
-    // Extract pair and new_id from the sorted merge entry
-    const auto& pair_ids = merge.first;
-    int new_id = merge.second;
-
-    // Create the merged token by combining the existing tokens
-    std::wstring merged_token = ids_to_tokens[pair_ids.first] + ids_to_tokens[pair_ids.second];
-    
-    // Update the vocabulary mappings
-    ids_to_tokens[new_id] = merged_token;
-    tokens_to_ids[merged_token] = new_id;
-
+        std::wstring merged_token = ids_to_tokens[pair_ids.first] + ids_to_tokens[pair_ids.second];
+        ids_to_tokens[new_id] = merged_token;
+        tokens_to_ids[merged_token] = new_id;
     // Optional: Write to vocab file for debugging
-    std::wstring vocab_line = decode({pair_ids.first}) + L" + " +
-                              decode({pair_ids.second}) + L" = " +
-                              decode({new_id});
-    file2 << vocab_line << L"\n";
-}
+    // std::wstring vocab_line = decode({pair_ids.first}) + L" + " +
+    //                           decode({pair_ids.second}) + L" = " +
+    //                           decode({new_id});
+    // file2 << vocab_line << L"\n";
+    }
     
 
 }
@@ -156,15 +131,21 @@ std::vector<int> BPE::encode(const std::wstring& text) {
 
 std::vector<int> BPE::tokenize(const std::wstring& token) {
     std::vector<int> token_ids;
-
-    // Tokenize into individual characters (initial token IDs)
-    for (const wchar_t& ch : token) {
-        std::wstring char_str(1, ch);
-        auto it = tokens_to_ids.find(char_str);
-        if (it == tokens_to_ids.end()) {
-            throw std::invalid_argument("Character not found in vocab: ");
+    token_ids.reserve(token.length());  // Pre-allocate
+    
+    for (wchar_t ch : token) {
+        // Fast path for ASCII (85%+ of typical Arabic text)
+        if (static_cast<unsigned>(ch) < 256) {
+            token_ids.push_back(static_cast<int>(ch));
+        } 
+        // Lookup for non-ASCII
+        else if (auto it = tokens_to_ids.find(std::wstring(1, ch)); 
+                 it != tokens_to_ids.end()) {
+            token_ids.push_back(it->second);
         }
-        token_ids.push_back(it->second);
+        else {
+            throw std::runtime_error("Unknown character");
+        }
     }
 
     bool can_merge = true;
@@ -202,19 +183,18 @@ std::vector<int> BPE::tokenize(const std::wstring& token) {
 }
 
 std::wstring BPE::decode(const std::vector<int>& token_ids) {
-    std::wstring decoded_wstring;
-
-    for (int token_id : token_ids) {
-        auto it = ids_to_tokens.find(token_id);
-        if (it == ids_to_tokens.end()) {
-            throw std::invalid_argument("Token ID " + std::to_string(token_id) + " not found in vocab.");
+    std::wstring result;
+    result.reserve(token_ids.size() * 2);  // Estimate average token length
+    
+    for (int id : token_ids) {
+        // Direct vector access: O(1)
+        if (id < 0 || id >= static_cast<int>(ids_to_tokens.size())) {
+            throw std::invalid_argument("Invalid token ID");
         }
-
-        const std::wstring& token = it->second;
-        decoded_wstring += token;
+        result += ids_to_tokens[id];
     }
-
-    return decoded_wstring;
+    
+    return result;
 }
 
 int main() {
@@ -229,7 +209,7 @@ int main() {
 
     // Quickly get file size and preallocate buffer
     auto file_size = file.tellg();
-    std::cout << file_size;
+    // std::cout << file_size;
     file.seekg(0, std::ios::beg);
     std::string utf8_content(file_size, '\0');
 

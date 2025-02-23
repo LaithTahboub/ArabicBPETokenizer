@@ -23,24 +23,27 @@
 // fast hash function for pairs
 struct PairHash {
     template <class T1, class T2>
-    std::size_t operator()(const std::pair<T1, T2>& pair) const {
-        std::size_t h1 = std::hash<T1>{}(pair.first);
-        std::size_t h2 = std::hash<T2>{}(pair.second);
-        return h1 ^ (h2 << 1);
+    size_t operator()(const std::pair<T1, T2>& p) const {
+        size_t h1 = std::hash<T1>{}(p.first);
+        size_t h2 = std::hash<T2>{}(p.second);
+        return h1 ^ (h2 << 1) ^ (h1 >> 1) ^ (h2 << 3);
     }
 };
 
 class BPE {
     
 private:
-    std::map<std::pair<int, int>, int> merges;
+   // Use unordered_map for O(1) lookups during tokenization
+   std::unordered_map<std::pair<int, int>, int, PairHash> merges;
+   // Store merges in the order they were added
+   std::vector<std::pair<std::pair<int, int>, int>> merge_order;
 
-    std::map<int, std::wstring> ids_to_tokens;
+   std::vector<std::wstring> ids_to_tokens; // ID = vector index
+
+   std::unordered_map<std::wstring, int> tokens_to_ids; // Faster lookups
+
 
 public:
-
-
-    std::map<std::wstring, int> tokens_to_ids;
 
     void train(const std::wstring& text, int vocab_size, const std::unordered_set<std::wstring>& allowed_special);
     std::vector<int> encode(const std::wstring& text);
@@ -90,24 +93,28 @@ public:
 
     std::vector<std::wstring> split_on_space_or_newline(const std::wstring& input) {
         std::vector<std::wstring> tokens;
-        std::wistringstream stream(input);
-        std::wstring token;
-    
-        while (stream >> token) {
-            tokens.push_back(token);
+        size_t start = 0, end = 0;
+        
+        while ((end = input.find_first_of(L" \n", start)) != std::wstring::npos) {
+            if (end != start) // Skip empty tokens
+                tokens.emplace_back(input.substr(start, end - start));
+            start = end + 1;
         }
-    
+        if (start < input.length())
+            tokens.emplace_back(input.substr(start));
+        
         return tokens;
     }
 
-
     std::wstring get_vocab() {
         std::wstring vocab;
-        for (auto p : tokens_to_ids) {
-            std::string arrow = " -> ";
-            std::string newline = "\n";
-            vocab += p.first + std::wstring(arrow.begin(), arrow.end()) + std::to_wstring(p.second) + std::wstring(newline.begin(), newline.end()) ;
+        vocab.reserve(ids_to_tokens.size() * 20);  // Pre-allocate
+        
+        // Iterate by ID order using vector
+        for (size_t id = 0; id < ids_to_tokens.size(); ++id) {
+            vocab += ids_to_tokens[id] + L" -> " + std::to_wstring(id) + L"\n";
         }
+        
         return vocab;
     }
 };
