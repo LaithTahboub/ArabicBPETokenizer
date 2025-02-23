@@ -149,10 +149,10 @@ void BPE::train(const std::wstring& text, int vocab_size, const std::unordered_s
         ids_to_tokens[new_id] = merged_token;
         tokens_to_ids[merged_token] = new_id;
     // Optional: Write to vocab file for debugging
-    // std::wstring vocab_line = decode({pair_ids.first}) + L" + " +
-    //                           decode({pair_ids.second}) + L" = " +
-    //                           decode({new_id});
-    // file2 << vocab_line << L"\n";
+    std::wstring vocab_line = decode({pair_ids.first}) + L" + " +
+                              decode({pair_ids.second}) + L" = " +
+                              decode({new_id});
+    file2 << vocab_line << L"\n";
     }
     
 
