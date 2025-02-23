@@ -14,6 +14,7 @@
 #include <locale>
 #include <codecvt>
 #include <string>
+#include <queue> 
 
 // BPE::BPE() {
 //     merges = std::map<std::pair<int, int>, int>();
@@ -21,6 +22,9 @@
 //     tokens_to_ids = std::map<std::wstring, int>();
 
 // }
+
+ // Track global pair frequencies and max-heap
+
 
 void BPE::train(const std::wstring& text, int vocab_size, const std::unordered_set<std::wstring>& allowed_special) {
 
@@ -60,28 +64,82 @@ void BPE::train(const std::wstring& text, int vocab_size, const std::unordered_s
         }
     }
 
-    std::vector<int> token_ids;
-    
-    for (const wchar_t& ch : text) {
-        std::wstring ch_str(1, ch);
-        auto it = tokens_to_ids.find(ch_str);
-        if (it == tokens_to_ids.end()) {
-            throw std::runtime_error("Character not found in vocab.");
+    std::vector<std::vector<int>> word_token_ids;
+    std::vector<std::wstring> words = split_on_space_or_newline(text);
+    for (const auto& word : words) {
+        std::vector<int> ids;
+        for (wchar_t ch : word) {
+            std::wstring ch_str(1, ch);
+            ids.push_back(tokens_to_ids.at(ch_str)); // Direct lookup (O(1))
         }
-        token_ids.emplace_back(it->second);
+        word_token_ids.push_back(ids);
     }
-    for (int new_id = tokens_to_ids.size(); new_id < vocab_size; ++new_id) {
-        auto pair_opt = find_freq_pair(token_ids);
-        if (!pair_opt.has_value()) break;
-
-        auto pair_id = pair_opt.value();
-        replace_pair_inplace(token_ids, pair_id, new_id);
-        
-        // Add to both merges and merge_order
-        merges[pair_id] = new_id;
-        merge_order.emplace_back(pair_id, new_id); // Store insertion order
+    
+   
+    // Initialize pair frequencies
+    for (const auto& word : word_token_ids) {
+        for (size_t i = 0; i < word.size() - 1; ++i) {
+            auto pair = std::make_pair(word[i], word[i + 1]);
+            pair_counts[pair]++;
+        }
     }
-
+    for (const auto& [pair, count] : pair_counts) {
+        pair_queue.push({pair, count});
+    }
+    
+    // Merge loop using priority queue
+    while (!pair_queue.empty() && ids_to_tokens.size() < vocab_size) {
+        auto current = pair_queue.top();
+        pair_queue.pop();
+    
+        // Skip if frequency is outdated
+        if (current.count != pair_counts[current.pair]) continue;
+    
+        int new_id = ids_to_tokens.size();
+        merges[current.pair] = new_id;
+        merge_order.emplace_back(current.pair, new_id);
+    
+        // Update vocabulary
+        std::wstring merged_token = ids_to_tokens[current.pair.first] + ids_to_tokens[current.pair.second];
+        ids_to_tokens.push_back(merged_token);
+        tokens_to_ids[merged_token] = new_id;
+    
+        // Process each word to apply merges and update frequencies
+        for (auto& word : word_token_ids) {
+            size_t i = 0;
+            while (i < word.size() - 1) {
+                if (word[i] == current.pair.first && word[i + 1] == current.pair.second) {
+                    // Remove old pairs from global counts
+                    if (i > 0) {
+                        auto left_pair = std::make_pair(word[i - 1], word[i]);
+                        pair_counts[left_pair]--;
+                    }
+                    if (i < word.size() - 2) {
+                        auto right_pair = std::make_pair(word[i + 1], word[i + 2]);
+                        pair_counts[right_pair]--;
+                    }
+    
+                    // Replace with merged token
+                    word[i] = new_id;
+                    word.erase(word.begin() + i + 1);
+    
+                    // Add new pairs to global counts
+                    if (i > 0) {
+                        auto new_left_pair = std::make_pair(word[i - 1], word[i]);
+                        pair_counts[new_left_pair]++;
+                        pair_queue.push({new_left_pair, pair_counts[new_left_pair]});
+                    }
+                    if (i < word.size() - 1) {
+                        auto new_right_pair = std::make_pair(word[i], word[i + 1]);
+                        pair_counts[new_right_pair]++;
+                        pair_queue.push({new_right_pair, pair_counts[new_right_pair]});
+                    }
+                } else {
+                    i++;
+                }
+            }
+        }
+    }
     // Process merges in insertion order (no sorting needed)
     for (const auto& merge : merge_order) {
         const auto& pair_ids = merge.first;

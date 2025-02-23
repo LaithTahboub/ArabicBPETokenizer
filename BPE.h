@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <sstream>
 #include <optional>
+#include <queue>
 
 // fast hash function for pairs
 struct PairHash {
@@ -29,6 +30,13 @@ struct PairHash {
         return h1 ^ (h2 << 1) ^ (h1 >> 1) ^ (h2 << 3);
     }
 };
+
+struct PairFrequency {
+    std::pair<int, int> pair;
+    int count;
+    bool operator<(const PairFrequency& other) const { return count < other.count; }
+};
+
 
 class BPE {
     
@@ -42,6 +50,9 @@ private:
 
    std::unordered_map<std::wstring, int> tokens_to_ids; // Faster lookups
 
+   std::unordered_map<std::pair<int, int>, int, PairHash> pair_counts;
+
+   std::priority_queue<PairFrequency> pair_queue;
 
 public:
 
