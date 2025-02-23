@@ -1,0 +1,1 @@
+This is part of a research project to create an Islamic LLM. This LLM will be trained primarily or solely on authentic Arabic texts. Before we can perform this training, we need a strong Arabic tokenizer that effectively produces a vocabulary to be later used during training and inference. 
