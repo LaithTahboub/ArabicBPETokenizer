@@ -2,6 +2,8 @@
 // Created by ltahboub on 2/19/25.
 //
 
+#include <filesystem> 
+
 #include "BPE.h"
 
 #include <vector>
@@ -16,14 +18,9 @@
 #include <string>
 #include <queue> 
 
-// BPE::BPE() {
-//     merges = std::map<std::pair<int, int>, int>();
-//     ids_to_tokens = std::map<int, std::wstring>();
-//     tokens_to_ids = std::map<std::wstring, int>();
+namespace fs = std::filesystem;
 
-// }
 
- // Track global pair frequencies and max-heap
 
 
 void BPE::train(const std::wstring& text, int vocab_size, const std::unordered_set<std::wstring>& allowed_special) {
@@ -38,7 +35,7 @@ void BPE::train(const std::wstring& text, int vocab_size, const std::unordered_s
 
 
 
-    // Initialize ASCII (0-255)
+    // Initialize ASCII (0-255). TODO, change this to add arabic letters in the beginning
     ids_to_tokens.reserve(256 + 4096);  // Pre-allocate for ASCII + expected merges
     for (int i = 0; i < 256; ++i) {
         wchar_t ch = static_cast<wchar_t>(i);
@@ -70,7 +67,7 @@ void BPE::train(const std::wstring& text, int vocab_size, const std::unordered_s
         std::vector<int> ids;
         for (wchar_t ch : word) {
             std::wstring ch_str(1, ch);
-            ids.push_back(tokens_to_ids.at(ch_str)); // Direct lookup (O(1))
+            ids.push_back(tokens_to_ids.at(ch_str)); //  (O(1))
         }
         word_token_ids.push_back(ids);
     }
@@ -255,65 +252,230 @@ std::wstring BPE::decode(const std::vector<int>& token_ids) {
     return result;
 }
 
+
+// Helper function to split command line arguments
+std::vector<std::wstring> split_command(const std::wstring& input) {
+    std::vector<std::wstring> args;
+    std::wstring arg;
+    bool in_quotes = false;
+    
+    for (wchar_t c : input) {
+        if (c == L'"') {
+            in_quotes = !in_quotes;
+        } else if (isspace(c) && !in_quotes) {
+            if (!arg.empty()) {
+                args.push_back(arg);
+                arg.clear();
+            }
+        } else {
+            arg += c;
+        }
+    }
+    
+    if (!arg.empty()) {
+        args.push_back(arg);
+    }
+    
+    return args;
+}
+
+
+/* File IO Business */
+
+
+void BPE::save(const std::string& path) {
+    fs::create_directories(path);
+    save_vocab((fs::path(path) / "vocab.txt").string());
+    save_merges((fs::path(path) / "merges.txt").string());
+}
+
+void BPE::load(const std::string& path) {
+    load_vocab((fs::path(path) / "vocab.txt").string());
+    load_merges((fs::path(path) / "merges.txt").string());
+}
+
+void BPE::save_vocab(const std::string& path) {
+    std::wofstream file(path);
+    file.imbue(std::locale(file.getloc(), new std::codecvt_utf8<wchar_t>));
+    
+    for (size_t id = 0; id < ids_to_tokens.size(); ++id) {
+        file << id << L" " << ids_to_tokens[id] << L"\n";
+    }
+}
+
+void BPE::save_merges(const std::string& path) {
+    std::wofstream file(path);
+    file.imbue(std::locale(file.getloc(), new std::codecvt_utf8<wchar_t>));
+    
+    for (const auto& merge : merge_order) {
+        file << merge.first.first << L" " 
+             << merge.first.second << L" " 
+             << merge.second << L"\n";
+    }
+}
+
+void BPE::load_vocab(const std::string& path) {
+    std::wifstream file(path);
+    file.imbue(std::locale(file.getloc(), new std::codecvt_utf8<wchar_t>));
+    
+    ids_to_tokens.clear();
+    tokens_to_ids.clear();
+    
+    std::wstring line;
+    size_t line_num = 0;
+    
+    while (std::getline(file, line)) {
+        line_num++;
+        if (line.empty()) continue;
+        
+        size_t space_pos = line.find(L' ');
+        if (space_pos == std::wstring::npos) {
+            throw std::runtime_error("Invalid vocab format at line " + 
+                                   std::to_string(line_num));
+        }
+        
+        try {
+            // Extract ID
+            int id = std::stoi(line.substr(0, space_pos));
+            
+            // Validate ID order
+            if (id != static_cast<int>(ids_to_tokens.size())) {
+                throw std::runtime_error("Vocab ID mismatch at line " + 
+                                       std::to_string(line_num) + 
+                                       ". Expected ID: " + 
+                                       std::to_string(ids_to_tokens.size()) + 
+                                       ", Found: " + std::to_string(id));
+            }
+            
+            // Extract token
+            std::wstring token = line.substr(space_pos + 1);
+            
+            ids_to_tokens.push_back(token);
+            tokens_to_ids[token] = id;
+            
+        } catch (const std::invalid_argument&) {
+            throw std::runtime_error("Non-integer ID at line " + 
+                                   std::to_string(line_num));
+        } catch (const std::out_of_range&) {
+            throw std::runtime_error("ID out of range at line " + 
+                                   std::to_string(line_num));
+        }
+    }
+}
+
+void BPE::load_merges(const std::string& path) {
+    std::wifstream file(path);
+    file.imbue(std::locale(file.getloc(), new std::codecvt_utf8<wchar_t>));
+    
+    merges.clear();
+    merge_order.clear();
+    
+    std::wstring line;
+    while (std::getline(file, line)) {
+        std::wistringstream iss(line);
+        int left, right, new_id;
+        iss >> left >> right >> new_id;
+        
+        auto pair = std::make_pair(left, right);
+        merges[pair] = new_id;
+        merge_order.emplace_back(pair, new_id);
+    }
+}
+
 int main() {
-
-
-    std::string file_path = "quran.txt";
-
-    std::ifstream file(file_path, std::ios::binary | std::ios::ate);
-    if (!file) {
-        throw std::runtime_error("Unable to open file: " + file_path);
-    }
-
-    // Quickly get file size and preallocate buffer
-    auto file_size = file.tellg();
-    // std::cout << file_size;
-    file.seekg(0, std::ios::beg);
-    std::string utf8_content(file_size, '\0');
-
-    // Fast read entire file into memory
-    if (!file.read(&utf8_content[0], file_size)) {
-        throw std::runtime_error("Error reading file: " + file_path);
-    }
-
-    file.close();
-
-    // // Convert UTF-8 to wide string efficiently (single pass)
+    BPE bpe;
     std::wstring_convert<std::codecvt_utf8_utf16<wchar_t>> converter;
-    std::wstring quran_txt = converter.from_bytes(utf8_content);
-
-    // // Set locale for Unicode output
-    std::locale::global(std::locale(""));
-    std::wcout.imbue(std::locale());
-
-    // // Important: set locale for wcout
-    std::locale::global(std::locale(""));
-    std::wcout.imbue(std::locale());
-
-    BPE *bpe = new BPE;
     
-
-    bpe->train(quran_txt, 6000, std::unordered_set<std::wstring>());
-
-    // // std::cout << "[";
-    // // for (int token : bpe->encode("الَّذِينَ"))
-    // //     std::cout << token << ", ";
-    // // std::cout << "]"; 
-
-
-    // std::wstring vocab = bpe->get_vocab();
-
-    // std::wofstream file2("vocab.txt", std::ios::binary);
-    // file2.imbue(std::locale(file2.getloc(), new std::codecvt_utf8<wchar_t>));
-
+    std::cout << "BPE Tokenizer Shell\nType 'quit' or 'exit' to exit\n";
     
-    // if (!file2.is_open()) {
-    //     throw std::runtime_error("Unable to open file for writing: vocab.txt");
-    // }
+    while (true) {
+        std::cout << "> ";
+        std::string input;
+        std::getline(std::cin, input);
+        
+        if (input.empty()) continue;
+        
+        std::vector<std::string> args;
+        std::istringstream iss(input);
+        std::string token;
+        bool in_quotes = false;
+        std::string current;
+        
+        // Improved argument parsing
+        for (char c : input) {
+            if (c == '"') {
+                in_quotes = !in_quotes;
+            } else if (isspace(c) && !in_quotes) {
+                if (!current.empty()) {
+                    args.push_back(current);
+                    current.clear();
+                }
+            } else {
+                current += c;
+            }
+        }
+        if (!current.empty()) {
+            args.push_back(current);
+        }
 
-    // file2 << vocab;
-
-
-
+        try {
+            if (args.empty()) continue;
+            
+            if (args[0] == "quit" || args[0] == "exit") {
+                break;
+            }
+            else if (args[0] == "load") {
+                if (args.size() != 2) throw std::invalid_argument("Usage: load <directory>");
+                bpe.load(args[1]);
+                std::cout << "Loaded model from " << args[1] << "\n";
+            }
+            else if (args[0] == "train") {
+                if (args.size() != 4) throw std::invalid_argument("Usage: train <text_file> <vocab_size> <save_dir>");
+                
+                // Read training file
+                std::ifstream file(args[1]);
+                std::string content((std::istreambuf_iterator<char>(file)), 
+                    std::istreambuf_iterator<char>());
+                std::wstring text = converter.from_bytes(content);
+                
+                // Train and save
+                bpe.train(text, std::stoi(args[2]), {});
+                bpe.save(args[3]);
+                std::cout << "Trained and saved model to " << args[3] << "\n";
+            }
+            else if (args[0] == "encode") {
+                if (args.size() != 2) throw std::invalid_argument("Usage: encode \"<text>\"");
+                std::wstring wtext = converter.from_bytes(args[1]);
+                auto ids = bpe.encode(wtext);
+                
+                std::cout << "[";
+                for (size_t i = 0; i < ids.size(); ++i) {
+                    std::cout << ids[i];
+                    if (i != ids.size() - 1) std::cout << ", ";
+                }
+                std::cout << "]\n";
+            }
+            else if (args[0] == "decode") {
+                if (args.size() != 2) throw std::invalid_argument("Usage: decode <comma_separated_ids>");
+                
+                std::vector<int> ids;
+                std::stringstream ss(args[1]);
+                std::string token;
+                
+                while (std::getline(ss, token, ',')) {
+                    ids.push_back(std::stoi(token));
+                }
+                
+                std::wstring decoded = bpe.decode(ids);
+                std::cout << converter.to_bytes(decoded) << "\n";
+            }
+            else {
+                std::cout << "Unknown command: " << args[0] << "\n";
+            }
+        } catch (const std::exception& e) {
+            std::cout << "Error: " << e.what() << "\n";
+        }
+    }
+    
     return 0;
 }

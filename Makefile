@@ -1,6 +1,7 @@
 # Compiler and flags
 CXX = g++
-CXXFLAGS = -std=c++2a -Wall -Wextra -pedantic
+CXXFLAGS = -std=c++17 -Wall -Wextra -pedantic
+LDFLAGS = -lstdc++fs  # Moved to linker flags
 
 # Executable name
 TARGET = BPE
@@ -8,21 +9,18 @@ TARGET = BPE
 # Source files
 SOURCES = BPE.cpp
 
-# Object files (automatically derived from sources)
+# Object files
 OBJECTS = $(SOURCES:.cpp=.o)
 
-# Default target
 all: $(TARGET)
 
-# Linking the executable
+# Link with LDFLAGS after objects
 $(TARGET): $(OBJECTS)
-	$(CXX) $(CXXFLAGS) -o $(TARGET) $(OBJECTS)
+	$(CXX) $(CXXFLAGS) -o $@ $^ $(LDFLAGS)  
 
-# Compile source files into object files
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-# Clean up generated files
 clean:
 	rm -f $(TARGET) $(OBJECTS)
 
