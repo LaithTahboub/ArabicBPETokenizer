@@ -159,7 +159,10 @@ void BPE::train(const std::wstring& text, int vocab_size, const std::unordered_s
 std::vector<int> BPE::encode(const std::wstring& text) {
     // this takes in a wstring and returns the list of tokens ids 
 
-    std::vector<std::wstring> tokens = split_on_space_or_newline(text);
+
+    // The following two lines are drastically different. The first doesnt allow for multi-word tokens, the other does.
+    // std::vector<std::wstring> tokens = split_on_space_or_newline(text);
+    std::vector<std::wstring> tokens = {text};
 
     // TODO: Think about ensuring that \n is treated as a separate token
     // std::vector<std::wstring> words = text.replace("\n", " \n ").split()
