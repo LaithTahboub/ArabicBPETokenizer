@@ -92,6 +92,12 @@ void BPE::train(const std::wstring& text, int vocab_size, const std::unordered_s
         // Skip if frequency is outdated
         if (current.count != pair_counts[current.pair]) continue;
     
+        // Early exit: no more merges possible
+        if (current.count < 2) {
+            std::wcout << L"Stopping early - no more merges with frequency >= 2\n";
+            break;
+        }
+
         int new_id = ids_to_tokens.size();
         merges[current.pair] = new_id;
         merge_order.emplace_back(current.pair, new_id);
